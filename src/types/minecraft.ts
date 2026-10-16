@@ -13,6 +13,27 @@ export type CategoryId =
   | 'search'
   | 'hotbar';
 
+export type DimensionType = 'overworld' | 'nether' | 'end';
+export type DimensionFilter = 'all' | 'overworld' | 'nether' | 'end';
+
+export type SubCollectionType =
+  | 'armor_trims_sherds'
+  | 'mob_drops_trophies'
+  | 'ores_minerals'
+  | 'flora_agriculture'
+  | 'enchantments_potions';
+
+export type SubCollectionFilter = 'all' | SubCollectionType;
+
+export type StackLimitFilter = 'all' | 64 | 16 | 1;
+
+export interface CraftingRecipe {
+  type: 'shaped' | 'shapeless' | 'smelting' | 'special';
+  grid?: (string | null)[][];
+  ingredients?: string[];
+  resultCount: number;
+}
+
 export interface MinecraftItem {
   id: string; // e.g. "minecraft:oak_log"
   shortId: string; // e.g. "oak_log"
@@ -24,6 +45,10 @@ export interface MinecraftItem {
   isObtainable: boolean;
   stackSize: number;
   texture: string; // base64 data URL
+  dimension: DimensionType;
+  subCollection: SubCollectionType | null;
+  source: string;
+  recipe: CraftingRecipe | null;
 }
 
 export interface CategoryInfo {
@@ -42,6 +67,14 @@ export interface CollectionData {
   obtainableCount: number;
   categories: CategoryInfo[];
   items: MinecraftItem[];
+}
+
+export interface WorldProfile {
+  id: string;
+  name: string;
+  createdAt: string;
+  collected: string[];
+  pinned: string[];
 }
 
 export type FilterStatus = 'all' | 'collected' | 'uncollected';

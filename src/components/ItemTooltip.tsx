@@ -18,7 +18,7 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
 
   // Keep tooltip on screen
   const safeX = Math.min(position.x + 16, window.innerWidth - 280);
-  const safeY = Math.max(10, Math.min(position.y - 30, window.innerHeight - 150));
+  const safeY = Math.max(10, Math.min(position.y - 30, window.innerHeight - 180));
 
   const isRare =
     item.id.includes('netherite') ||
@@ -45,13 +45,45 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
 
       <div className="mc-tooltip-id">{item.id}</div>
 
-      <div style={{ color: '#aaaaaa', fontSize: '11px', marginBottom: '4px' }}>
+      <div style={{ color: '#aaaaaa', fontSize: '11px', marginBottom: '2px' }}>
         Category: <span style={{ color: '#e0e0e0' }}>{item.categoryName}</span>
       </div>
 
-      <div style={{ color: '#aaaaaa', fontSize: '11px' }}>
-        Max Stack: <span style={{ color: '#e0e0e0' }}>{item.stackSize}</span>
+      <div style={{ color: '#aaaaaa', fontSize: '11px', marginBottom: '4px' }}>
+        Dimension:{' '}
+        <span
+          style={{
+            color:
+              item.dimension === 'nether'
+                ? '#ff7777'
+                : item.dimension === 'end'
+                ? '#d980fa'
+                : '#55ff55'
+          }}
+        >
+          {item.dimension === 'nether'
+            ? '🔥 The Nether'
+            : item.dimension === 'end'
+            ? '🌌 The End'
+            : '🌲 Overworld'}
+        </span>{' '}
+        • Stack: {item.stackSize}x
       </div>
+
+      {item.subCollection && (
+        <div style={{ color: '#f39c12', fontSize: '10px', marginBottom: '2px' }}>
+          ⭐ Sub-Collection:{' '}
+          {item.subCollection === 'armor_trims_sherds'
+            ? 'Armor Trims & Sherds'
+            : item.subCollection === 'mob_drops_trophies'
+            ? 'Mob Drops & Trophies'
+            : item.subCollection === 'ores_minerals'
+            ? 'Ores & Minerals'
+            : item.subCollection === 'flora_agriculture'
+            ? 'Flora & Agriculture'
+            : 'Enchantments & Potions'}
+        </div>
+      )}
 
       {item.isOperator && (
         <div style={{ color: '#ffaa00', fontSize: '11px', marginTop: '2px' }}>
@@ -61,16 +93,16 @@ export const ItemTooltip: React.FC<ItemTooltipProps> = ({
 
       <div className="mc-tooltip-status">
         {isCollected ? (
-          <span style={{ color: '#55ff55' }}>✔ Collected in survival</span>
+          <span style={{ color: '#55ff55' }}>✔ Collected in world</span>
         ) : (
           <span style={{ color: '#ff7777' }}>✖ Not yet collected</span>
         )}
       </div>
 
-      <div style={{ color: '#666666', fontSize: '10px', marginTop: '4px' }}>
-        Left-click: {isCollected ? 'Mark Uncollected' : 'Mark Collected'}
+      <div style={{ color: '#888888', fontSize: '10px', marginTop: '4px' }}>
+        Left-click: Toggle collected • Shift-click: {isPinned ? 'Unpin' : 'Pin'}
         <br />
-        Shift-click: {isPinned ? 'Unpin from Hotbar' : 'Pin to Hotbar'}
+        <span style={{ color: '#7df53b' }}>Click Item Banner to view Crafting Recipe</span>
       </div>
     </div>
   );

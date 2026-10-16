@@ -1,5 +1,9 @@
-const STORAGE_KEY = 'minecraft_collected_items_v26_2';
-const HOTBAR_KEY = 'minecraft_pinned_hotbar_v26_2';
+import { WorldProfile } from '../types/minecraft';
+
+const PROFILES_KEY = 'minecraft_world_profiles_v26_2';
+const ACTIVE_PROFILE_KEY = 'minecraft_active_profile_v26_2';
+const LEGACY_STORAGE_KEY = 'minecraft_collected_items_v26_2';
+const LEGACY_HOTBAR_KEY = 'minecraft_pinned_hotbar_v26_2';
 const SETTINGS_KEY = 'minecraft_tracker_settings_v26_2';
 
 export interface TrackerSettings {
@@ -20,50 +24,119 @@ export const DEFAULT_SETTINGS: TrackerSettings = {
   soundEnabled: true
 };
 
-export function loadCollectedItems(): Set<string> {
+export function loadProfiles(): WorldProfile[] {
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (!data) return new Set();
-    const parsed = JSON.parse(data);
-    if (Array.isArray(parsed)) {
-      return new Set(parsed);
-    }
-  } catch (e) {
-    console.error('Failed to load collected items from localStorage:', e);
-  }
-  return new Set();
-}
-
-export function saveCollectedItems(collected: Set<string>): void {
-  try {
-    const arr = Array.from(collected);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
-  } catch (e) {
-    console.error('Failed to save collected items to localStorage:', e);
-  }
-}
-
-export function loadPinnedHotbar(): string[] {
-  try {
-    const data = localStorage.getItem(HOTBAR_KEY);
-    if (data) {
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed)) {
-        return parsed.slice(0, 9);
+    const raw = localStorage.getItem(PROFILES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
       }
     }
-  } catch {
-    // Ignore
+
+    // Auto-migrate legacy single-world collection data if available
+    let legacyCollected: string[] = [];
+    let legacyPinned: string[] = [];
+    try {
+      const legC = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legC) legacyCollected = JSON.parse(legC);
+      const legP = localStorage.getItem(LEGACY_HOTBAR_KEY);
+      if (legP) legacyPinned = JSON.parse(legP);
+    } catch {
+      // Ignore
+    }
+
+    const defaultProfile: WorldProfile = {
+      id: 'profile-default',
+      name: 'World 1 (Default)',
+      createdAt: new Date().toISOString(),
+      collected: Array.isArray(legacyCollected) ? legacyCollected : [],
+      pinned: Array.isArray(legacyPinned) ? legacyPinned : []
+    };
+
+    saveProfiles([defaultProfile]);
+    setActiveProfileId(defaultProfile.id);
+    return [defaultProfile];
+  } catch (e) {
+    console.error('Failed to load world profiles:', e);
   }
-  return [];
+
+  const fallback: WorldProfile = {
+    id: 'profile-default',
+    name: 'World 1 (Default)',
+    createdAt: new Date().toISOString(),
+    collected: [],
+    pinned: []
+  };
+  return [fallback];
 }
 
-export function savePinnedHotbar(items: string[]): void {
+export function saveProfiles(profiles: WorldProfile[]): void {
   try {
-    localStorage.setItem(HOTBAR_KEY, JSON.stringify(items.slice(0, 9)));
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+  } catch (e) {
+    console.error('Failed to save profiles to localStorage:', e);
+  }
+}
+
+export function getActiveProfileId(): string {
+  try {
+    const active = localStorage.getItem(ACTIVE_PROFILE_KEY);
+    if (active) return active;
   } catch {
     // Ignore
   }
+  return 'profile-default';
+}
+
+export function setActiveProfileId(id: string): void {
+  try {
+    localStorage.setItem(ACTIVE_PROFILE_KEY, id);
+  } catch {
+    // Ignore
+  }
+}
+
+export function createProfile(name: string): WorldProfile {
+  const profiles = loadProfiles();
+  const newProfile: WorldProfile = {
+    id: `profile-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    name: name.trim() || `World ${profiles.length + 1}`,
+    createdAt: new Date().toISOString(),
+    collected: [],
+    pinned: []
+  };
+
+  const updated = [...profiles, newProfile];
+  saveProfiles(updated);
+  setActiveProfileId(newProfile.id);
+  return newProfile;
+}
+
+export function renameProfile(id: string, newName: string): void {
+  const profiles = loadProfiles();
+  const updated = profiles.map((p) => (p.id === id ? { ...p, name: newName.trim() || p.name } : p));
+  saveProfiles(updated);
+}
+
+export function deleteProfile(id: string): WorldProfile[] {
+  const profiles = loadProfiles();
+  if (profiles.length <= 1) return profiles; // Cannot delete last remaining world
+
+  const updated = profiles.filter((p) => p.id !== id);
+  saveProfiles(updated);
+
+  const activeId = getActiveProfileId();
+  if (activeId === id) {
+    setActiveProfileId(updated[0].id);
+  }
+  return updated;
+}
+
+export function updateProfileData(id: string, collected: string[], pinned: string[]): void {
+  const profiles = loadProfiles();
+  const updated = profiles.map((p) => (p.id === id ? { ...p, collected, pinned } : p));
+  saveProfiles(updated);
 }
 
 export function loadSettings(): TrackerSettings {
@@ -86,12 +159,13 @@ export function saveSettings(settings: TrackerSettings): void {
   }
 }
 
-export function exportBackup(collected: Set<string>, pinned: string[]): void {
+export function exportBackup(collected: Set<string>, pinned: string[], profileName: string): void {
   const payload = {
     app: 'Minecraft Creative Inventory Collection Tracker',
     gameVersion: '26.2',
     gameEdition: 'Java Edition',
     updateName: 'Chaos Cubed',
+    profileName,
     exportTimestamp: new Date().toISOString(),
     totalCollected: collected.size,
     collectedItems: Array.from(collected),
@@ -103,9 +177,10 @@ export function exportBackup(collected: Set<string>, pinned: string[]): void {
   const url = URL.createObjectURL(blob);
 
   const a = document.createElement('a');
+  const safeProfile = profileName.toLowerCase().replace(/[^a-z0-9]/g, '-');
   const dateStr = new Date().toISOString().slice(0, 10);
   a.href = url;
-  a.download = `minecraft-26.2-collection-${dateStr}.json`;
+  a.download = `minecraft-26.2-${safeProfile}-${dateStr}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -116,8 +191,8 @@ export interface ImportResult {
   success: boolean;
   collected?: Set<string>;
   pinned?: string[];
+  profileName?: string;
   message: string;
-  count?: number;
 }
 
 export async function importBackup(file: File): Promise<ImportResult> {
@@ -136,8 +211,8 @@ export async function importBackup(file: File): Promise<ImportResult> {
 
         let itemsArray: string[] = [];
         let pinnedArray: string[] = [];
+        let profileName = 'Imported World';
 
-        // Support both our formal backup structure and simple string arrays
         if (Array.isArray(parsed)) {
           itemsArray = parsed.filter((item) => typeof item === 'string');
         } else if (parsed && typeof parsed === 'object') {
@@ -150,6 +225,10 @@ export async function importBackup(file: File): Promise<ImportResult> {
           if (Array.isArray(parsed.pinnedHotbar)) {
             pinnedArray = parsed.pinnedHotbar.filter((item: unknown) => typeof item === 'string');
           }
+
+          if (parsed.profileName) {
+            profileName = parsed.profileName;
+          }
         } else {
           resolve({ success: false, message: 'Invalid backup file format. Expected a JSON object or array.' });
           return;
@@ -158,7 +237,7 @@ export async function importBackup(file: File): Promise<ImportResult> {
         if (itemsArray.length === 0 && (!parsed || !parsed.app)) {
           resolve({
             success: false,
-            message: 'No valid item identifiers found in the file. Ensure you selected a valid collection backup.'
+            message: 'No valid item identifiers found in the file.'
           });
           return;
         }
@@ -168,8 +247,8 @@ export async function importBackup(file: File): Promise<ImportResult> {
           success: true,
           collected: newSet,
           pinned: pinnedArray,
-          count: newSet.size,
-          message: `Successfully restored ${newSet.size} items from backup!`
+          profileName,
+          message: `Successfully restored ${newSet.size} items for ${profileName}!`
         });
       } catch (err) {
         resolve({
@@ -185,9 +264,4 @@ export async function importBackup(file: File): Promise<ImportResult> {
 
     reader.readAsText(file);
   });
-}
-
-export function resetCollection(): void {
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(HOTBAR_KEY);
 }

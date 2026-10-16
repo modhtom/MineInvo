@@ -4,14 +4,22 @@ import {
   CategoryId,
   FilterStatus,
   VisualStyle,
+  DimensionFilter,
+  SubCollectionFilter,
+  StackLimitFilter,
   CategoryInfo,
-  CollectionData
+  CollectionData,
+  WorldProfile
 } from './types/minecraft';
 import {
-  loadCollectedItems,
-  saveCollectedItems,
-  loadPinnedHotbar,
-  savePinnedHotbar,
+  loadProfiles,
+  saveProfiles,
+  getActiveProfileId,
+  setActiveProfileId,
+  createProfile,
+  renameProfile,
+  deleteProfile,
+  updateProfileData,
   loadSettings,
   saveSettings,
   exportBackup,
@@ -23,19 +31,44 @@ import { InventoryGrid } from './components/InventoryGrid';
 import { Hotbar } from './components/Hotbar';
 import { ItemTooltip } from './components/ItemTooltip';
 import { XPProgressBar } from './components/XPProgressBar';
+import { FilterBar } from './components/FilterBar';
+import { RecipeModal } from './components/RecipeModal';
+import { WorldProfilesModal } from './components/WorldProfilesModal';
 import { ResetModal, BatchActionModal, ImportModal, InfoModal } from './components/Modals';
 import { LoadingScreen } from './components/LoadingScreen';
-
-// Fallback data is loaded dynamically if fetch fails
 
 export const App: React.FC = () => {
   // Dataset loading state
   const [itemData, setItemData] = useState<CollectionData | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Collection state
-  const [collectedSet, setCollectedSet] = useState<Set<string>>(() => loadCollectedItems());
-  const [pinnedIds, setPinnedIds] = useState<string[]>(() => loadPinnedHotbar());
+  // Multi-World Profiles state
+  const [profiles, setProfiles] = useState<WorldProfile[]>(() => loadProfiles());
+  const [activeProfileId, setActiveProfileIdState] = useState<string>(() => getActiveProfileId());
+
+  const activeProfile = useMemo(() => {
+    return profiles.find((p) => p.id === activeProfileId) || profiles[0];
+  }, [profiles, activeProfileId]);
+
+  // Collection and Pinned state tied to active profile
+  const [collectedSet, setCollectedSet] = useState<Set<string>>(
+    () => new Set(activeProfile?.collected || [])
+  );
+  const [pinnedIds, setPinnedIds] = useState<string[]>(
+    () => activeProfile?.pinned || []
+  );
+
+  // Sync profile changes to storage
+  useEffect(() => {
+    if (activeProfileId) {
+      const collArr = Array.from(collectedSet);
+      updateProfileData(activeProfileId, collArr, pinnedIds);
+      setProfiles((prev) =>
+        prev.map((p) =>
+          p.id === activeProfileId ? { ...p, collected: collArr, pinned: pinnedIds } : p
+        )
+      );
+    }
+  }, [collectedSet, pinnedIds, activeProfileId]);
 
   // Settings & View state
   const initialSettings = useMemo(() => loadSettings(), []);
@@ -46,10 +79,15 @@ export const App: React.FC = () => {
   const [soundEnabled, setSoundEnabled] = useState<boolean>(initialSettings.soundEnabled);
   const [includeOperator, setIncludeOperator] = useState<boolean>(initialSettings.includeOperator);
 
+  // Thematic Tag Filters
+  const [dimensionFilter, setDimensionFilter] = useState<DimensionFilter>('all');
+  const [subCollectionFilter, setSubCollectionFilter] = useState<SubCollectionFilter>('all');
+  const [stackLimitFilter, setStackLimitFilter] = useState<StackLimitFilter>('all');
+
   // Row scrolling state inside the 9x5 grid (0 to maxRowOffset)
   const [rowOffset, setRowOffset] = useState(0);
 
-  // Tooltip & Selected Item state (for desktop hover and mobile touch inspection)
+  // Tooltip & Selected Item state
   const [hoveredItem, setHoveredItem] = useState<MinecraftItem | null>(null);
   const [selectedItem, setSelectedItem] = useState<MinecraftItem | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -58,6 +96,10 @@ export const App: React.FC = () => {
   const [showResetModal, setShowResetModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
+  const [showProfilesModal, setShowProfilesModal] = useState(false);
+  const [showRecipeModal, setShowRecipeModal] = useState(false);
+  const [recipeModalItem, setRecipeModalItem] = useState<MinecraftItem | null>(null);
+
   const [batchModalState, setBatchModalState] = useState<{
     isOpen: boolean;
     type: 'collect' | 'uncollect';
@@ -74,7 +116,6 @@ export const App: React.FC = () => {
       .then((data: CollectionData) => {
         if (isMounted) {
           setItemData(data);
-          // Set initial selected item as first item
           if (data.items.length > 0) {
             setSelectedItem(data.items[0]);
           }
@@ -109,6 +150,44 @@ export const App: React.FC = () => {
     });
   }, [filterStatus, includeOperator, visualStyle, soundEnabled]);
 
+  // World Profile Switcher handlers
+  const handleSelectProfile = (id: string) => {
+    setActiveProfileId(id);
+    setActiveProfileIdState(id);
+    const target = profiles.find((p) => p.id === id);
+    if (target) {
+      setCollectedSet(new Set(target.collected));
+      setPinnedIds(target.pinned);
+      sound.playClick(1.1);
+    }
+  };
+
+  const handleCreateProfile = (name: string) => {
+    const newProf = createProfile(name);
+    setProfiles(loadProfiles());
+    setActiveProfileIdState(newProf.id);
+    setCollectedSet(new Set());
+    setPinnedIds([]);
+    sound.playLevelUp();
+  };
+
+  const handleRenameProfile = (id: string, name: string) => {
+    renameProfile(id, name);
+    setProfiles(loadProfiles());
+  };
+
+  const handleDeleteProfile = (id: string) => {
+    const updated = deleteProfile(id);
+    setProfiles(updated);
+    const newActiveId = getActiveProfileId();
+    setActiveProfileIdState(newActiveId);
+    const target = updated.find((p) => p.id === newActiveId);
+    if (target) {
+      setCollectedSet(new Set(target.collected));
+      setPinnedIds(target.pinned);
+    }
+  };
+
   // Save collected state
   const handleToggleCollect = useCallback((item: MinecraftItem) => {
     setSelectedItem(item);
@@ -121,7 +200,6 @@ export const App: React.FC = () => {
         next.add(item.id);
         sound.playCollect();
       }
-      saveCollectedItems(next);
       return next;
     });
   }, []);
@@ -141,7 +219,6 @@ export const App: React.FC = () => {
           next = [...prev, item.id];
         }
       }
-      savePinnedHotbar(next);
       return next;
     });
   }, []);
@@ -307,7 +384,7 @@ export const App: React.FC = () => {
     setRowOffset(0);
   };
 
-  // Filter items based on activeTab, searchQuery, and filterStatus
+  // Filter items based on activeTab, searchQuery, filters, and tag filters
   const visibleItems = useMemo(() => {
     if (!itemData) return [];
     let result = itemData.items;
@@ -325,6 +402,21 @@ export const App: React.FC = () => {
       }
     } else {
       result = result.filter((i) => i.category === activeTab);
+    }
+
+    // Filter by Dimension
+    if (dimensionFilter !== 'all') {
+      result = result.filter((i) => i.dimension === dimensionFilter);
+    }
+
+    // Filter by Special Sub-Collection
+    if (subCollectionFilter !== 'all') {
+      result = result.filter((i) => i.subCollection === subCollectionFilter);
+    }
+
+    // Filter by Stack Limit
+    if (stackLimitFilter !== 'all') {
+      result = result.filter((i) => i.stackSize === stackLimitFilter);
     }
 
     // Filter by Search Query
@@ -347,7 +439,18 @@ export const App: React.FC = () => {
     }
 
     return result;
-  }, [itemData, activeTab, searchQuery, filterStatus, includeOperator, pinnedItems, collectedSet]);
+  }, [
+    itemData,
+    activeTab,
+    dimensionFilter,
+    subCollectionFilter,
+    stackLimitFilter,
+    searchQuery,
+    filterStatus,
+    includeOperator,
+    pinnedItems,
+    collectedSet
+  ]);
 
   // Pagination / Row calculation
   const totalRows = Math.ceil(visibleItems.length / 9);
@@ -389,7 +492,7 @@ export const App: React.FC = () => {
     return found ? found.name : 'Items';
   }, [activeTab, itemData]);
 
-  // Overall statistics calculation
+  // Overall statistics calculation for active world
   const stats = useMemo(() => {
     if (!itemData) return { total: 0, collected: 0, percentage: 0 };
     const totalCount = includeOperator ? itemData.totalItems : itemData.obtainableCount;
@@ -414,7 +517,6 @@ export const App: React.FC = () => {
           next.delete(item.id);
         }
       });
-      saveCollectedItems(next);
       return next;
     });
     if (isCollect) {
@@ -424,9 +526,8 @@ export const App: React.FC = () => {
     }
   };
 
-  // Full reset
+  // Full reset for active world
   const handleConfirmReset = () => {
-    resetCollection();
     setCollectedSet(new Set());
     setPinnedIds([]);
     sound.playClick(0.6);
@@ -435,10 +536,8 @@ export const App: React.FC = () => {
   // Import backup success
   const handleImportSuccess = (newCollected: Set<string>, newPinned: string[]) => {
     setCollectedSet(newCollected);
-    saveCollectedItems(newCollected);
     if (newPinned && newPinned.length > 0) {
       setPinnedIds(newPinned);
-      savePinnedHotbar(newPinned);
     }
     sound.playLevelUp();
   };
@@ -520,16 +619,25 @@ export const App: React.FC = () => {
             </span>
           </div>
           <div style={{ fontSize: '11px', color: '#aaaaaa', marginTop: '1px' }}>
-            Java Edition • 1,537 Items & Textures
+            Java Edition • 1,537 Items & Recipes
           </div>
         </div>
 
         {/* Global Action Toolbar */}
         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+          {/* Active World Profile Button */}
           <button
             className="mc-btn"
-            onClick={() => exportBackup(collectedSet, pinnedIds)}
-            title="Download JSON backup"
+            onClick={() => setShowProfilesModal(true)}
+            title="Switch or manage worlds"
+            style={{ color: '#7df53b', borderColor: '#7df53b' }}
+          >
+            🌍 {activeProfile?.name || 'World 1'}
+          </button>
+          <button
+            className="mc-btn"
+            onClick={() => exportBackup(collectedSet, pinnedIds, activeProfile?.name || 'World 1')}
+            title="Download JSON backup for this world"
           >
             💾 Export
           </button>
@@ -560,7 +668,7 @@ export const App: React.FC = () => {
           <button
             className="mc-btn mc-btn-red"
             onClick={() => setShowResetModal(true)}
-            title="Reset collection"
+            title="Reset active world collection"
           >
             🗑
           </button>
@@ -575,6 +683,36 @@ export const App: React.FC = () => {
           categoryName={activeTab !== 'search' && activeTab !== 'all' ? currentCategoryTitle : undefined}
         />
       </div>
+
+      {/* Tags, Dimensions & Stack Limits Filter Bar */}
+      <FilterBar
+        dimension={dimensionFilter}
+        subCollection={subCollectionFilter}
+        stackLimit={stackLimitFilter}
+        matchingCount={visibleItems.length}
+        onSelectDimension={(d) => {
+          sound.playClick();
+          setDimensionFilter(d);
+          setRowOffset(0);
+        }}
+        onSelectSubCollection={(s) => {
+          sound.playClick();
+          setSubCollectionFilter(s);
+          setRowOffset(0);
+        }}
+        onSelectStackLimit={(limit) => {
+          sound.playClick();
+          setStackLimitFilter(limit);
+          setRowOffset(0);
+        }}
+        onResetFilters={() => {
+          sound.playClick();
+          setDimensionFilter('all');
+          setSubCollectionFilter('all');
+          setStackLimitFilter('all');
+          setRowOffset(0);
+        }}
+      />
 
       {/* Quick Controls Bar: Filter, Style, Batch Actions */}
       <div
@@ -778,6 +916,9 @@ export const App: React.FC = () => {
             onClearSearch={() => {
               setSearchQuery('');
               setFilterStatus('all');
+              setDimensionFilter('all');
+              setSubCollectionFilter('all');
+              setStackLimitFilter('all');
               setRowOffset(0);
             }}
           />
@@ -804,10 +945,17 @@ export const App: React.FC = () => {
         />
       </div>
 
-      {/* Mobile-Friendly Active Item Banner (shows details of last inspected/tapped item) */}
+      {/* Mobile & Desktop Active Item Banner (shows details, recipe button, and quick actions) */}
       {selectedItem && (
         <div className="mc-item-banner">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+            onClick={() => {
+              setRecipeModalItem(selectedItem);
+              setShowRecipeModal(true);
+            }}
+            title="Click to view recipe & how to obtain"
+          >
             <img
               src={selectedItem.texture}
               alt={selectedItem.name}
@@ -818,12 +966,28 @@ export const App: React.FC = () => {
                 {selectedItem.name}
               </div>
               <div style={{ fontSize: '10px', color: '#aaaaaa' }}>
-                {selectedItem.id} • {selectedItem.categoryName}
+                {selectedItem.dimension === 'nether'
+                  ? '🔥 Nether'
+                  : selectedItem.dimension === 'end'
+                  ? '🌌 End'
+                  : '🌲 Overworld'}{' '}
+                • {selectedItem.stackSize}x • {selectedItem.categoryName}
               </div>
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: '4px' }}>
+            <button
+              className="mc-btn"
+              style={{ fontSize: '11px', padding: '3px 6px', color: '#ffff55' }}
+              onClick={() => {
+                setRecipeModalItem(selectedItem);
+                setShowRecipeModal(true);
+              }}
+              title="View Crafting Recipe & How to Obtain"
+            >
+              📖 Recipe
+            </button>
             <button
               className={`mc-btn ${collectedSet.has(selectedItem.id) ? 'mc-btn-green' : ''}`}
               style={{ fontSize: '11px', padding: '3px 8px' }}
@@ -851,7 +1015,32 @@ export const App: React.FC = () => {
         isPinned={hoveredItem ? pinnedIds.includes(hoveredItem.id) : false}
       />
 
-      {/* Modals */}
+      {/* Crafting Recipe & How to Obtain Modal */}
+      <RecipeModal
+        item={recipeModalItem}
+        isOpen={showRecipeModal}
+        isCollected={recipeModalItem ? collectedSet.has(recipeModalItem.id) : false}
+        isPinned={recipeModalItem ? pinnedIds.includes(recipeModalItem.id) : false}
+        itemMap={itemMap}
+        onClose={() => setShowRecipeModal(false)}
+        onToggleCollect={handleToggleCollect}
+        onTogglePin={handleTogglePin}
+      />
+
+      {/* Multi-World Profiles Modal */}
+      <WorldProfilesModal
+        isOpen={showProfilesModal}
+        profiles={profiles}
+        activeProfileId={activeProfileId}
+        totalObtainable={itemData.obtainableCount}
+        onClose={() => setShowProfilesModal(false)}
+        onSelectProfile={handleSelectProfile}
+        onCreateProfile={handleCreateProfile}
+        onRenameProfile={handleRenameProfile}
+        onDeleteProfile={handleDeleteProfile}
+      />
+
+      {/* Standard Modals */}
       <ResetModal
         isOpen={showResetModal}
         onClose={() => setShowResetModal(false)}
